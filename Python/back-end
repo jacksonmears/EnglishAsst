@@ -1,0 +1,129 @@
+import pyodbc
+import random
+import bcrypt
+from datetime import datetime
+
+connection = pyodbc.connect("DRIVER={SQL Server}; SERVER=MCN110-LHN7M2BB; DATABASE=EnglishAssistant")
+cursor = connection.cursor()
+
+tables = ['dbo.vocab_words', 'dbo.users', 'dbo.questions', 'user_progress']
+column_list = [x[0] for x in connection.cursor().execute(f'SELECT * FROM {tables[0]}').description]
+word_list = [x.word for x in connection.cursor().execute(f'SELECT word FROM {tables[0]}')]
+fill_blank = dict([(x[0], x[1]) for x in connection.cursor().execute(f'SELECT word, fill_blank  FROM {tables[0]}')])
+mc_1 = dict([(x[0], [x[1],x[2]]) for x in connection.cursor().execute(f'SELECT word, mc_q_1, mc_a_1 answer FROM {tables[0]}')])
+mc_2 = dict([(x[0], [x[1],x[2]]) for x in connection.cursor().execute(f'SELECT word, mc_q_2, mc_a_2 FROM {tables[0]}')])
+questionSet = dict([(x[0], x[1:]) for x in connection.cursor().execute(f'SELECT * FROM {tables[2]}')])
+userProgress = dict([(x[0], x[1:]) for x in connection.cursor().execute(f'SELECT * FROM {tables[3]}')])
+num_q = len(word_list)
+
+
+def createAccount():
+    username = input('Enter your username: ')
+    while len(userPass := input('Enter your password: ')) < 8:
+        print('Password too short')
+    while input('Enter your password again: ') != userPass:
+        print('Passwords do not match')
+    hashed_password = bcrypt.hashpw(userPass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    userEmail = input('Enter your email: ')
+    while input('Enter your email again: ') != userEmail:
+        print('Emails do not match')
+    sql_query = """INSERT INTO users(username, password, email) VALUES (?,?,?)"""
+    cursor.execute(sql_query, (username, hashed_password, userEmail))
+    connection.commit()
+
+
+def loginAccount():
+    username = input('Enter your username: ')
+    try :
+        checkLogin = [x for x in connection.cursor().execute(f'SELECT username, password FROM {tables[1]} WHERE username = ?', username)]
+        MAX_ATTEMPTS = 3
+        for attempt in range(MAX_ATTEMPTS):
+            userPass = input('Please enter your password: ').encode('utf-8')
+            if bcrypt.checkpw(userPass, checkLogin[0][1].encode('utf-8')):
+                print("Logged in successfully")
+                break
+            else:
+                print("Incorrect password")
+        else:
+            print("Failed too many times")
+
+    except :
+        print('Incorrect username. Try again or create account.')
+
+
+def getQuestionBatch(userID):
+    batchOfQuestions = []
+    try:
+        while len(batchOfQuestions) < 10:
+            if (randKey := random.choice(list(questionSet.keys()))) not in batchOfQuestions: batchOfQuestions.append(randKey)
+
+        for question in batchOfQuestions:
+            print(questionSet[question][1])
+            answer = input("Answer: ")
+            trackAttempt(userID, question, answer)
+    except:
+        print('no more questions')
+
+
+
+def trackAttempt(userID, question, answer):
+    is_correct = (
+        (questionSet[question][0] == "multiple_choice" and answer.lower() == questionSet[question][2][0].lower()) or
+        questionSet[question][2].lower() == answer.lower()
+    )
+
+    outcome = 1 if is_correct else 0
+    question_id = question
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            '''
+            INSERT INTO dbo.user_progress (user_id, question_id)
+            VALUES (?, ?)
+            ''',
+            userID, question_id
+        )
+
+        if outcome == 1:
+            cursor.execute(
+                '''
+                UPDATE dbo.user_progress
+                SET accurate_count = accurate_count + 1,
+                    attempt_count = attempt_count + 1
+                WHERE user_id = ? AND question_id = ?
+                ''',
+                userID, question_id
+            )
+        else:
+            cursor.execute(
+                '''
+                UPDATE dbo.user_progress
+                SET attempt_count = attempt_count + 1
+                WHERE user_id = ? AND question_id = ?
+                ''',
+                userID, question_id
+            )
+
+        connection.commit()
+
+        print(f"Attempt recorded as '{outcome}' for user {userID} on question {question_id}.\n")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        connection.rollback()
+
+    finally:
+        cursor.close()
+
+
+
+
+def main():
+    jacksonID = 2
+    getQuestionBatch(jacksonID)
+
+
+
+main()

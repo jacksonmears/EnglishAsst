@@ -2,6 +2,7 @@ import pyodbc
 import random
 import bcrypt
 from datetime import datetime
+from collections import deque
 
 connection = pyodbc.connect("DRIVER={SQL Server}; SERVER=MCN110-LHN7M2BB; DATABASE=EnglishAssistant")
 cursor = connection.cursor()
@@ -50,6 +51,9 @@ def loginAccount():
     except :
         print('Incorrect username. Try again or create account.')
 
+
+def createSets(userID):
+    
 
 def getQuestionBatch(userID):
     batchOfQuestions = []

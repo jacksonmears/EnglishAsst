@@ -131,3 +131,29 @@ def main():
 
 
 main()
+
+
+################
+DECLARE @user AS INT;
+SET @user = 1;
+
+-- Combine new and review questions
+SELECT * FROM (
+    -- Select 2 new questions that the user hasn't attempted yet
+    SELECT TOP 2 q.question_id
+    FROM dbo.questions q
+    LEFT JOIN user_progress up ON CAST(q.question_id AS INT) = up.question_id AND up.user_id = @user
+    WHERE up.question_id IS NULL  -- Ensures the question hasn't been attempted by the user
+    ORDER BY NEWID()  -- Randomize selection of new questions
+) AS new_questions
+
+UNION ALL
+
+SELECT * FROM (
+    -- Select 8 review questions, prioritizing those with lower accuracy and oldest attempt dates
+    SELECT TOP 8 question_id
+    FROM user_progress
+    WHERE user_id = @user
+      AND attempt_count > 0
+    ORDER BY accurate_count ASC, last_attempted ASC
+) AS review_questions;

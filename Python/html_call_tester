@@ -1,0 +1,63 @@
+from flask import Flask, request, jsonify, render_template
+import pyodbc
+import bcrypt
+from datetime import datetime
+import random
+
+app = Flask(__name__)
+
+# Database connection
+connection = pyodbc.connect("DRIVER={SQL Server}; SERVER=MCN110-LHN7M2BB; DATABASE=EnglishAssistant")
+cursor = connection.cursor()
+
+# Cache for user data
+user_cache = {}
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/create-account", methods=["POST"])
+def create_account():
+    data = request.json
+    username = data["username"]
+    userPass = data["password"]
+    userEmail = data["email"]
+
+    hashed_password = bcrypt.hashpw(userPass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    try:
+        cursor.execute("INSERT INTO users (username, password, email) VALUES (?, ?, ?)", username, hashed_password, userEmail)
+        connection.commit()
+        return jsonify({"message": "Account created successfully"}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/login", methods=["POST"])
+def login_account():
+    data = request.json
+    username = data["username"]
+    userPass = data["password"].encode("utf-8")
+    
+    try:
+        checkLogin = [x for x in cursor.execute("SELECT username, password FROM dbo.users WHERE username = ?", username)]
+        if len(checkLogin) == 0:
+            return jsonify({"error": "Incorrect username"}), 404
+        
+        if bcrypt.checkpw(userPass, checkLogin[0][1].encode("utf-8")):
+            return jsonify({"message": "Logged in successfully"}), 200
+        else:
+            return jsonify({"error": "Incorrect password"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+@app.route("/get-questions", methods=["GET"])
+def get_questions():
+    userID = int(request.args.get("userID"))
+    load_user_cache(userID)
+    batch = get_question_batch(userID)
+    return jsonify({"questions": batch})
+
+# Add other functions as necessary (e.g., load_user_cache, get_question_batch)
+
+if __name__ == "__main__":
+    app.run(debug=True)

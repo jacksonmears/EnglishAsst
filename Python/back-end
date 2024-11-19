@@ -82,7 +82,7 @@ def load_user_cache(userID):
 
 
 # get questions they have struggled with first, haven't seen next, then if questions they haven't answered in a long time
-def getQuestionBatch(userID):
+def get_question_batch(userID):
     batch = []
     # try:
 
@@ -90,7 +90,7 @@ def getQuestionBatch(userID):
         question = next(iter(user_cache[userID]["unseen_questions"].items()))
         batch.append(question[0])
         del user_cache[userID]["unseen_questions"][question[0]]
-        print(user_cache[userID]["unseen_questions"])
+        # print(user_cache[userID]["unseen_questions"])
 
     while len(user_cache[userID]["attempted_questions"]) > 0 and len(batch) < 10:
         question = next(iter(user_cache[userID]["attempted_questions"].items()))
@@ -104,71 +104,82 @@ def getQuestionBatch(userID):
         rand = random.randint(0, 612)
         if rand not in batch: batch.append(rand)
 
-    print(batch)
+
+    try:
+        while len(batch) < 10:
+            if (randKey := random.choice(list(question.keys()))) not in batch: batch.append(randKey)
+        load_user_cache(userID)
+    except:
+        print('no more questions')
+        load_user_cache(userID)
+
+    return batch
 
 
-        # while len(batchOfQuestions) < 10:
-        #     if (randKey := random.choice(list(questionSet.keys()))) not in batchOfQuestions: batchOfQuestions.append(randKey)
-        #
-        # for question in batchOfQuestions:
-        #     print(questionSet[question][1])
-        #     answer = input("Answer: ")
-        #     trackAttempt(userID, question, answer)
-    # except:
-    #     print('no more questions')
 #
-#
-#
-# def trackAttempt(userID, question, answer):
-#     is_correct = (
-#         (questionSet[question][0] == "multiple_choice" and answer.lower() == questionSet[question][2][0].lower()) or
-#         questionSet[question][2].lower() == answer.lower()
-#     )
-#
-#     outcome = 1 if is_correct else 0
-#     question_id = question
-#
-#     try:
-#         cursor = connection.cursor()
-#
-#         cursor.execute(
-#             '''
-#             INSERT INTO dbo.user_progress (user_id, question_id)
-#             VALUES (?, ?)
-#             ''',
-#             userID, question_id
-#         )
-#
-#         if outcome == 1:
-#             cursor.execute(
-#                 '''
-#                 UPDATE dbo.user_progress
-#                 SET accurate_count = accurate_count + 1,
-#                     attempt_count = attempt_count + 1
-#                 WHERE user_id = ? AND question_id = ?
-#                 ''',
-#                 userID, question_id
-#             )
-#         else:
-#             cursor.execute(
-#                 '''
-#                 UPDATE dbo.user_progress
-#                 SET attempt_count = attempt_count + 1
-#                 WHERE user_id = ? AND question_id = ?
-#                 ''',
-#                 userID, question_id
-#             )
-#
-#         connection.commit()
-#
-#         print(f"Attempt recorded as '{outcome}' for user {userID} on question {question_id}.\n")
-#
-#     except Exception as e:
-#         print(f"An error occurred: {e}")
-#         connection.rollback()
-#
-#     finally:
-#         cursor.close()
+def ask_questions(userID, batch):
+    for question in batch:
+        query = "SELECT * FROM questions WHERE question_id = ?"
+        cursor.execute(query, (question))
+        storage = cursor.fetchone()
+        print(storage[2])
+
+        trackAttempt(userID, storage, input())
+
+
+
+
+
+def trackAttempt(userID, question, answer):
+    is_correct = (
+        (question[1] == "multiple_choice" and answer.lower() == question[3][0].lower()) or
+        question[3].lower() == answer.lower()
+    )
+
+    outcome = 1 if is_correct else 0
+    question_id = question[0]
+    print("The correct answer is: ", question[3])
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            '''
+            INSERT INTO dbo.user_progress (user_id, question_id)
+            VALUES (?, ?)
+            ''',
+            userID, question_id
+        )
+
+        if outcome == 1:
+            cursor.execute(
+                '''
+                UPDATE dbo.user_progress
+                SET accurate_count = accurate_count + 1,
+                    attempt_count = attempt_count + 1
+                WHERE user_id = ? AND question_id = ?
+                ''',
+                userID, question_id
+            )
+        else:
+            cursor.execute(
+                '''
+                UPDATE dbo.user_progress
+                SET attempt_count = attempt_count + 1
+                WHERE user_id = ? AND question_id = ?
+                ''',
+                userID, question_id
+            )
+
+        connection.commit()
+
+        print(f"Attempt recorded as '{outcome}' for user {userID} on question {question_id}.\n")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        connection.rollback()
+
+    finally:
+        cursor.close()
 
 
 
@@ -178,35 +189,8 @@ def main():
     load_user_cache(jacksonID)
     # for x in user_cache[jacksonID]["unseen_questions"]:
     #     print(x)
-    getQuestionBatch(jacksonID)
-
+    questions = get_question_batch(jacksonID)
+    ask_questions(jacksonID, questions)
 
 
 main()
-
-
-
-################
-DECLARE @user AS INT;
-SET @user = 1;
-
--- Combine new and review questions
-SELECT * FROM (
-    -- Select 2 new questions that the user hasn't attempted yet
-    SELECT TOP 2 q.question_id
-    FROM dbo.questions q
-    LEFT JOIN user_progress up ON CAST(q.question_id AS INT) = up.question_id AND up.user_id = @user
-    WHERE up.question_id IS NULL  -- Ensures the question hasn't been attempted by the user
-    ORDER BY NEWID()  -- Randomize selection of new questions
-) AS new_questions
-
-UNION ALL
-
-SELECT * FROM (
-    -- Select 8 review questions, prioritizing those with lower accuracy and oldest attempt dates
-    SELECT TOP 8 question_id
-    FROM user_progress
-    WHERE user_id = @user
-      AND attempt_count > 0
-    ORDER BY accurate_count ASC, last_attempted ASC
-) AS review_questions;

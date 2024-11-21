@@ -1,63 +1,149 @@
 from flask import Flask, request, jsonify, render_template
 import pyodbc
+import random
 import bcrypt
 from datetime import datetime
-import random
 
+# Flask app initialization
 app = Flask(__name__)
 
 # Database connection
 connection = pyodbc.connect("DRIVER={SQL Server}; SERVER=MCN110-LHN7M2BB; DATABASE=EnglishAssistant")
 cursor = connection.cursor()
 
-# Cache for user data
 user_cache = {}
 
-@app.route("/")
-def home():
-    return render_template("index.html")
 
-@app.route("/create-account", methods=["POST"])
+# Route for the home page
+@app.route('/')
+def home():
+    return render_template('index.html')  # Replace with your HTML file
+
+
+# Route to create a new account
+@app.route('/create_account', methods=['POST'])
 def create_account():
     data = request.json
-    username = data["username"]
-    userPass = data["password"]
-    userEmail = data["email"]
+    username = data.get('username')
+    user_pass = data.get('password')
+    user_email = data.get('email')
 
-    hashed_password = bcrypt.hashpw(userPass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    if len(user_pass) < 8:
+        return jsonify({'error': 'Password too short'}), 400
+
+    hashed_password = bcrypt.hashpw(user_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
     try:
-        cursor.execute("INSERT INTO users (username, password, email) VALUES (?, ?, ?)", username, hashed_password, userEmail)
+        sql_query = """INSERT INTO users(username, password, email) VALUES (?, ?, ?)"""
+        cursor.execute(sql_query, (username, hashed_password, user_email))
         connection.commit()
-        return jsonify({"message": "Account created successfully"}), 201
+        return jsonify({'message': 'Account created successfully'})
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
-@app.route("/login", methods=["POST"])
+
+# Route to log in
+@app.route('/login', methods=['POST'])
 def login_account():
     data = request.json
-    username = data["username"]
-    userPass = data["password"].encode("utf-8")
-    
+    username = data.get('username')
+    user_pass = data.get('password')
+
     try:
-        checkLogin = [x for x in cursor.execute("SELECT username, password FROM dbo.users WHERE username = ?", username)]
-        if len(checkLogin) == 0:
-            return jsonify({"error": "Incorrect username"}), 404
-        
-        if bcrypt.checkpw(userPass, checkLogin[0][1].encode("utf-8")):
-            return jsonify({"message": "Logged in successfully"}), 200
+        query = """SELECT username, password FROM dbo.users WHERE username = ?"""
+        result = cursor.execute(query, username).fetchone()
+
+        if result and bcrypt.checkpw(user_pass.encode('utf-8'), result[1].encode('utf-8')):
+            return jsonify({'message': 'Logged in successfully'})
         else:
-            return jsonify({"error": "Incorrect password"}), 403
+            return jsonify({'error': 'Incorrect username or password'}), 401
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
-@app.route("/get-questions", methods=["GET"])
-def get_questions():
-    userID = int(request.args.get("userID"))
-    load_user_cache(userID)
-    batch = get_question_batch(userID)
-    return jsonify({"questions": batch})
 
-# Add other functions as necessary (e.g., load_user_cache, get_question_batch)
+# Route to load user cache
+@app.route('/load_user_cache/<int:user_id>', methods=['GET'])
+def load_user_cache(user_id):
+    unseen_query = """
+        SELECT q.question_id
+        FROM questions q
+        LEFT JOIN user_progress up ON q.question_id = up.question_id AND up.user_id = ?
+        WHERE up.question_id IS NULL;
+    """
+    attempted_query = """
+        SELECT question_id, attempt_count, accurate_count, last_attempted
+        FROM user_progress
+        WHERE user_id = ?;
+    """
 
-if __name__ == "__main__":
+    try:
+        cursor.execute(unseen_query, user_id)
+        unseen_questions = {row[0]: None for row in cursor.fetchall()}
+
+        cursor.execute(attempted_query, user_id)
+        attempted_questions = {
+            row[0]: {"attempt_count": row[1], "accurate_count": row[2], "last_attempted": row[3]}
+            for row in cursor.fetchall()
+        }
+
+        user_cache[user_id] = {
+            "unseen_questions": unseen_questions,
+            "attempted_questions": attempted_questions,
+            "last_updated": datetime.now()
+        }
+        return jsonify(user_cache[user_id])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# Route to get a question batch
+@app.route('/get_question_batch/<int:user_id>', methods=['GET'])
+def get_question_batch(user_id):
+    if user_id not in user_cache:
+        return jsonify({'error': 'User cache not loaded'}), 400
+
+    batch = []
+
+    while len(user_cache[user_id]["unseen_questions"]) > 0 and len(batch) < 2:
+        question = next(iter(user_cache[user_id]["unseen_questions"].items()))
+        batch.append(question[0])
+        del user_cache[user_id]["unseen_questions"][question[0]]
+
+    while len(user_cache[user_id]["attempted_questions"]) > 0 and len(batch) < 10:
+        question = next(iter(user_cache[user_id]["attempted_questions"].items()))
+        batch.append(question[0])
+        del user_cache[user_id]["attempted_questions"][question[0]]
+
+    while len(batch) < 10:
+        rand = random.randint(0, 612)
+        if rand not in batch:
+            batch.append(rand)
+
+    return jsonify(batch)
+
+
+# Route to ask questions
+@app.route('/ask_questions', methods=['POST'])
+def ask_questions():
+    data = request.json
+    user_id = data.get('user_id')
+    question_ids = data.get('questions', [])
+
+    questions = []
+    for question_id in question_ids:
+        query = "SELECT * FROM questions WHERE question_id = ?"
+        cursor.execute(query, question_id)
+        question = cursor.fetchone()
+        if question:
+            questions.append({
+                'id': question[0],
+                'text': question[2],
+                'correct_answer': question[3]
+            })
+
+    return jsonify({'questions': questions})
+
+
+# Run the app
+if __name__ == '__main__':
     app.run(debug=True)

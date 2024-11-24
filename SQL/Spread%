@@ -1,0 +1,60 @@
+use basketball_data;
+
+WITH actual_results AS (
+    SELECT 
+        o.game_id,
+        o.h_team,
+        CAST(o.h_score AS INT) AS h_score,
+        o.a_team,
+        CAST(o.a_score AS INT) AS a_score,
+        -- Determine if the home team covered the spread
+        CASE 
+            WHEN (CAST(o.h_score AS INT) - CAST(o.a_score AS INT)) + CAST(p.h_spread AS FLOAT) > 0 THEN 'Yes'
+            ELSE 'No'
+        END AS home_team_covered,
+        -- Determine the actual spread winner
+        CASE 
+            WHEN (CAST(o.h_score AS INT) - CAST(o.a_score AS INT)) + CAST(p.h_spread AS FLOAT) > 0 THEN o.h_team
+            ELSE o.a_team
+        END AS actual_spread_winner
+    FROM 
+        dbo.outcomes2425 as o
+    INNER JOIN 
+        dbo.predictions2425 p ON o.game_id = p.game_id
+
+	where 
+		o.h_score > 0
+),
+prediction_results AS (
+    SELECT 
+        ar.game_id,
+        ar.h_team,
+        ar.h_score,
+        p.h_score AS h_team_predicted,
+        p.h_spread,
+        ar.a_team,
+        ar.a_score,
+        p.a_score AS a_team_predicted,
+        p.a_spread,
+        ar.home_team_covered,
+        -- Determine if the prediction was correct
+        CASE 
+            WHEN 
+                ((CAST(p.h_score AS INT) - CAST(p.a_score AS INT)) + CAST(p.h_spread AS FLOAT) > 0 
+                 AND ar.actual_spread_winner = p.h_team)
+                OR
+                ((CAST(p.a_score AS INT) - CAST(p.h_score AS INT)) + CAST(p.a_spread AS FLOAT) > 0 
+                 AND ar.actual_spread_winner = p.a_team) THEN 'Yes'
+            ELSE 'No'
+        END AS predicted_correctly
+    FROM 
+        actual_results ar
+    INNER JOIN 
+        dbo.predictions2425 p ON ar.game_id = p.game_id
+)
+SELECT 
+    COUNT(CASE WHEN pr.predicted_correctly = 'Yes' THEN 1 END) AS count_of_yes,
+    COUNT(*) AS total_rows,
+    (COUNT(CASE WHEN pr.predicted_correctly = 'Yes' THEN 1 END) * 1.0) / COUNT(*) AS correct_predictions_percentage
+FROM 
+    prediction_results pr;

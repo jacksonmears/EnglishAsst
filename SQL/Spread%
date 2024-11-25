@@ -23,7 +23,7 @@ WITH actual_results AS (
         dbo.predictions2425 p ON o.game_id = p.game_id
 
 	where 
-		o.h_score > 0
+		o.h_score > 0 and p.h_spread is not null
 ),
 prediction_results AS (
     SELECT 

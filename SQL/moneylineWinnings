@@ -1,0 +1,62 @@
+USE basketball_data;
+
+WITH CombinedData AS (
+    SELECT
+        p.game_id,
+        p.date,
+        p.pred_winner,
+        p.h_moneyline,
+        p.a_moneyline,
+        o.h_team,
+        o.a_team,
+        o.h_score,
+        o.a_score,
+        CASE
+            WHEN CAST(o.h_score AS FLOAT) > CAST(o.a_score AS FLOAT) THEN o.h_team
+            WHEN CAST(o.a_score AS FLOAT) > CAST(o.h_score AS FLOAT) THEN o.a_team
+        END AS actual_winner
+    FROM
+        dbo.predictions2425 p
+    INNER JOIN
+        dbo.outcomes2425 o
+    ON
+        p.game_id = o.game_id
+
+	where 
+		o.h_score > 0 and p.h_moneyline is not null
+),
+Winnings AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        h_team,
+        a_team,
+        h_moneyline,
+        a_moneyline,
+        CASE
+            WHEN pred_winner = actual_winner THEN
+                -- Winning calculation based on American odds
+                CASE
+                    WHEN pred_winner = h_team AND h_moneyline < 0 THEN 1 + 100.0 / ABS(CAST(h_moneyline AS FLOAT)) -- Favorite
+                    WHEN pred_winner = h_team AND h_moneyline > 0 THEN 1 + CAST(h_moneyline AS FLOAT) / 100.0 -- Underdog
+                    WHEN pred_winner = a_team AND a_moneyline < 0 THEN 1 + 100.0 / ABS(CAST(a_moneyline AS FLOAT)) -- Favorite
+                    WHEN pred_winner = a_team AND a_moneyline > 0 THEN 1 + CAST(a_moneyline AS FLOAT) / 100.0 -- Underdog
+                END - 1.0 -- Subtract the original bet of $1
+            ELSE -1.0 -- Loss
+        END AS winnings
+    FROM
+        CombinedData
+)
+SELECT
+    game_id,
+    date,
+    pred_winner,
+    actual_winner,
+    winnings,
+    SUM(winnings) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_winnings
+FROM
+    Winnings
+ORDER BY
+    date, game_id;

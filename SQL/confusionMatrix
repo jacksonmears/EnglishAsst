@@ -1,0 +1,42 @@
+USE basketball_data;
+
+WITH prediction_results AS (
+    SELECT 
+        p.game_id,
+        TRIM(o.h_team) AS h_team,  
+        TRIM(o.a_team) AS a_team,  
+        CAST(o.h_score AS float) AS h_score,
+        CAST(o.a_score AS float) AS a_score,
+        CASE 
+            WHEN CAST(o.h_score AS float) > CAST(o.a_score AS float) THEN TRIM(o.h_team)  
+            WHEN CAST(o.a_score AS float) > CAST(o.h_score AS float) THEN TRIM(o.a_team)  
+        END AS actual_winner,
+        TRIM(p.pred_winner) AS pred_winner  
+    FROM 
+        dbo.predictions2425 p
+    LEFT JOIN 
+        dbo.outcomes2425 o ON p.game_id = o.game_id
+    WHERE 
+        o.h_score > 0  
+)
+SELECT 
+    CASE 
+        WHEN pr.pred_winner = pr.h_team AND cast(pr.h_score as float) > cast(pr.a_score as float) THEN 'TP_Home'
+        WHEN pr.pred_winner = pr.h_team AND cast(pr.h_score as float) < cast(pr.a_score as float) THEN 'FP_Home'
+        WHEN pr.pred_winner = pr.a_team AND cast(pr.h_score as float) > cast(pr.a_score as float)THEN 'FN_Home'
+        WHEN pr.pred_winner = pr.a_team AND cast(pr.a_score as float) > cast(pr.h_score as float) THEN 'TN'
+        ELSE 'Other'
+    END AS result,
+    COUNT(*) AS count
+FROM 
+    prediction_results pr
+GROUP BY 
+    CASE 
+        WHEN pr.pred_winner = pr.h_team AND cast(pr.h_score as float) > cast(pr.a_score as float) THEN 'TP_Home'
+        WHEN pr.pred_winner = pr.h_team AND cast(pr.h_score as float) < cast(pr.a_score as float) THEN 'FP_Home'
+        WHEN pr.pred_winner = pr.a_team AND cast(pr.h_score as float) > cast(pr.a_score as float) THEN 'FN_Home'
+        WHEN pr.pred_winner = pr.a_team AND cast(pr.a_score as float) > cast(pr.h_score as float) THEN 'TN'
+        ELSE 'Other'
+    END
+ORDER BY 
+    result;

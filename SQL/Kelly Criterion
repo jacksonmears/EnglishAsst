@@ -1,0 +1,72 @@
+WITH CombinedData AS (
+    SELECT
+        p.game_id,
+        p.date,
+        p.pred_winner,
+        p.h_moneyline,
+        p.a_moneyline,
+        o.h_team,
+        o.a_team,
+        o.h_score,
+        o.a_score,
+        CASE
+            WHEN CAST(o.h_score AS FLOAT) > CAST(o.a_score AS FLOAT) THEN o.h_team
+            WHEN CAST(o.a_score AS FLOAT) > CAST(o.h_score AS FLOAT) THEN o.a_team
+        END AS actual_winner
+    FROM
+        dbo.predictions2425 p
+    INNER JOIN
+        dbo.outcomes2425 o
+    ON
+        p.game_id = o.game_id
+    WHERE 
+        o.h_score > 0 AND p.h_moneyline IS NOT NULL
+),
+Winnings AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        h_team,
+        a_team,
+        h_moneyline,
+        a_moneyline,
+        -- Calculate the Kelly Criterion bet size based on prediction and odds
+        CASE
+            WHEN pred_winner = actual_winner THEN
+                -- Use Kelly Criterion for bet sizing
+                CASE 
+                    WHEN h_moneyline < 0 THEN 
+                        (100 * (CAST(h_moneyline AS FLOAT) / ABS(CAST(h_moneyline AS FLOAT)))) / ABS(CAST(h_moneyline AS FLOAT)) -- Negative odds
+                    WHEN h_moneyline > 0 THEN 
+                        (100 * (CAST(h_moneyline AS FLOAT) / 100)) / 100.0 -- Positive odds
+                    ELSE 0
+                END
+            ELSE -1.0 -- Loss
+        END AS winnings
+    FROM
+        CombinedData
+),
+Cumulative AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        winnings,
+        SUM(winnings) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_winnings
+    FROM
+        Winnings
+)
+SELECT
+    game_id,
+    date,
+    pred_winner,
+    actual_winner,
+    winnings,
+    SUM(winnings) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_winnings
+FROM
+    Cumulative
+ORDER BY
+    date, game_id;

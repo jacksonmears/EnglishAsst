@@ -1,4 +1,4 @@
-DECLARE @StartingBankroll FLOAT = 10.0; -- Set the starting bankroll dynamically
+DECLARE @StartingBankroll FLOAT = 25.0; -- Set the starting bankroll dynamically
 
 WITH CombinedData AS (
     SELECT
@@ -76,7 +76,6 @@ AdjustedBankroll AS (
     FROM
         KellyBet
 
-	where kelly_fraction > 0
 ),
 FinalBankroll AS (
     SELECT
@@ -88,10 +87,12 @@ FinalBankroll AS (
         probability_win,
         ROUND(kelly_fraction * @StartingBankroll, 2) AS kelly_bet,
         bankroll_change,
-        -- Calculate the running bankroll dynamically by using SUM() OVER
-        @StartingBankroll + SUM(bankroll_change) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bankroll
+        @StartingBankroll + SUM(bankroll_change) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bankroll,
+        SUM(CASE WHEN bankroll_change > 0 THEN 1 ELSE 0 END) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS accurate_predictions
     FROM
         AdjustedBankroll
+    WHERE
+        kelly_fraction > 0 -- Exclude negative Kelly values here
 )
 SELECT
     game_id,
@@ -102,7 +103,8 @@ SELECT
     probability_win,
     kelly_bet,
     bankroll_change,
-    running_bankroll
+    running_bankroll,
+    accurate_predictions
 FROM
     FinalBankroll
 ORDER BY

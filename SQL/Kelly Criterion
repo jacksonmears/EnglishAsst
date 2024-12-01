@@ -1,4 +1,4 @@
-USE basketball_data;
+DECLARE @StartingBankroll FLOAT = 10.0; -- Set the starting bankroll dynamically
 
 WITH CombinedData AS (
     SELECT
@@ -43,17 +43,14 @@ KellyBet AS (
             WHEN pred_winner = a_team AND a_moneyline > 0 THEN CAST(a_moneyline AS FLOAT) / 100.0 -- Underdog
             WHEN pred_winner = a_team AND a_moneyline < 0 THEN 100.0 / ABS(CAST(a_moneyline AS FLOAT)) -- Favorite
         END AS decimal_odds,
-        -- Calculate the Kelly Criterion bet size
-        ROUND(
-            25.0 * 
-            CASE
-                WHEN pred_winner = h_team THEN 
-                    (probability_win - (1 - probability_win) / (100.0 / ABS(CAST(h_moneyline AS FLOAT))))
-                WHEN pred_winner = a_team THEN
-                    (probability_win - (1 - probability_win) / (100.0 / ABS(CAST(a_moneyline AS FLOAT))))
-                ELSE 0
-            END, 2
-        ) AS kelly_bet
+        -- Calculate the Kelly Criterion bet size dynamically based on bankroll
+        CASE
+            WHEN pred_winner = h_team THEN
+                (probability_win - (1 - probability_win) / (100.0 / ABS(CAST(h_moneyline AS FLOAT))))
+            WHEN pred_winner = a_team THEN
+                (probability_win - (1 - probability_win) / (100.0 / ABS(CAST(a_moneyline AS FLOAT))))
+            ELSE 0
+        END AS kelly_fraction -- Fraction of bankroll to bet
     FROM
         CombinedData
     WHERE 
@@ -67,18 +64,19 @@ AdjustedBankroll AS (
         actual_winner,
         decimal_odds,
         probability_win,
-        kelly_bet,
+        kelly_fraction,
+        -- Dynamically calculate the bankroll and bet size row-by-row
+        @StartingBankroll AS initial_bankroll,
+        kelly_fraction * @StartingBankroll AS initial_kelly_bet,
         -- Calculate the change in bankroll for each game
-        ROUND(
-            CASE
-                WHEN pred_winner = actual_winner THEN kelly_bet * decimal_odds -- Winning bet
-                ELSE -kelly_bet -- Losing bet
-            END, 2
-        ) AS bankroll_change
+        CASE
+            WHEN pred_winner = actual_winner THEN ROUND((kelly_fraction * @StartingBankroll) * decimal_odds, 2) -- Winning bet
+            ELSE -ROUND(kelly_fraction * @StartingBankroll, 2) -- Losing bet
+        END AS bankroll_change
     FROM
         KellyBet
 
-	where kelly_bet > 0
+	where kelly_fraction > 0
 ),
 FinalBankroll AS (
     SELECT
@@ -88,10 +86,10 @@ FinalBankroll AS (
         actual_winner,
         decimal_odds,
         probability_win,
-        kelly_bet,
+        ROUND(kelly_fraction * @StartingBankroll, 2) AS kelly_bet,
         bankroll_change,
-        -- Calculate the running bankroll
-        25.0 + SUM(bankroll_change) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bankroll
+        -- Calculate the running bankroll dynamically by using SUM() OVER
+        @StartingBankroll + SUM(bankroll_change) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bankroll
     FROM
         AdjustedBankroll
 )

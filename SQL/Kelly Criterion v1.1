@@ -1,0 +1,117 @@
+use basketball_data
+
+DECLARE @StartingBankroll FLOAT = 25.0; -- Set the starting bankroll dynamically
+
+WITH CombinedData AS (
+    SELECT
+        p.game_id,
+        p.date,
+        p.pred_winner,
+        p.h_moneyline,
+        p.a_moneyline,
+        p.probability_win / 100.0 AS probability_win, -- Convert integer to decimal probability
+        o.h_team,
+        o.a_team,
+        o.h_score,
+        o.a_score,
+        CASE
+            WHEN CAST(o.h_score AS FLOAT) > CAST(o.a_score AS FLOAT) THEN o.h_team
+            WHEN CAST(o.a_score AS FLOAT) > CAST(o.h_score AS FLOAT) THEN o.a_team
+        END AS actual_winner
+    FROM
+        dbo.predictions2425 p
+    INNER JOIN
+        dbo.outcomes2425 o
+    ON
+        p.game_id = o.game_id
+    WHERE 
+        o.h_score > 0 AND p.h_moneyline IS NOT NULL
+),
+KellyBet AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        h_team,
+        a_team,
+        h_moneyline,
+        a_moneyline,
+        probability_win,
+        -- Correct the odds in decimal form based on American odds
+        CASE
+            WHEN pred_winner = h_team AND h_moneyline > 0 THEN (CAST(h_moneyline AS FLOAT) / 100.0) + 1 -- Positive American odds
+            WHEN pred_winner = h_team AND h_moneyline < 0 THEN (100.0 / ABS(CAST(h_moneyline AS FLOAT))) + 1 -- Negative American odds
+            WHEN pred_winner = a_team AND a_moneyline > 0 THEN (CAST(a_moneyline AS FLOAT) / 100.0) + 1 -- Positive American odds
+            WHEN pred_winner = a_team AND a_moneyline < 0 THEN (100.0 / ABS(CAST(a_moneyline AS FLOAT))) + 1 -- Negative American odds
+        END AS decimal_odds,
+        -- Calculate the Kelly Criterion bet size dynamically based on bankroll
+        CASE
+            WHEN pred_winner = h_team THEN
+                probability_win - (1 - probability_win) / ((100.0 / ABS(CAST(h_moneyline AS FLOAT))) + 1)
+            WHEN pred_winner = a_team THEN
+                probability_win - (1 - probability_win) / ((100.0 / ABS(CAST(a_moneyline AS FLOAT))) + 1)
+            ELSE 0
+        END AS kelly_fraction -- Fraction of bankroll to bet
+    FROM
+        CombinedData
+    WHERE 
+        probability_win > (1 - probability_win) / ((100.0 / ABS(CAST(h_moneyline AS FLOAT))) + 1) -- Exclude negative Kelly values
+),
+AdjustedBankroll AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        decimal_odds,
+        h_moneyline,
+        a_moneyline,
+        probability_win,
+        kelly_fraction,
+        @StartingBankroll AS initial_bankroll,
+        ROUND(kelly_fraction * @StartingBankroll, 2) AS initial_kelly_bet,
+        CASE
+            WHEN pred_winner = actual_winner THEN ROUND((kelly_fraction * @StartingBankroll) * (decimal_odds - 1), 2) -- Winning bet (net profit)
+            ELSE -ROUND(kelly_fraction * @StartingBankroll, 2) -- Losing bet
+        END AS bankroll_change
+    FROM
+        KellyBet
+),
+FinalBankroll AS (
+    SELECT
+        game_id,
+        date,
+        pred_winner,
+        actual_winner,
+        decimal_odds,
+        h_moneyline,
+        a_moneyline,
+        probability_win,
+        kelly_fraction,
+        ROUND(kelly_fraction * @StartingBankroll, 2) AS kelly_bet,
+        bankroll_change,
+        @StartingBankroll + SUM(bankroll_change) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bankroll,
+        SUM(CASE WHEN pred_winner = actual_winner THEN 1 ELSE 0 END) OVER (ORDER BY date, game_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS accurate_predictions
+    FROM
+        AdjustedBankroll
+    WHERE
+        kelly_fraction > 0 -- Exclude negative Kelly values here
+)
+SELECT
+    game_id,
+    date,
+    pred_winner,
+    actual_winner,
+    h_moneyline,
+    a_moneyline,
+    decimal_odds,
+    probability_win,
+    kelly_bet,
+    bankroll_change,
+    running_bankroll,
+    accurate_predictions
+FROM
+    FinalBankroll
+ORDER BY
+    date, game_id;
